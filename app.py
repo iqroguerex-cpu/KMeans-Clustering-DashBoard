@@ -66,7 +66,7 @@ if df is not None:
             df, x=df.columns[3], y=df.columns[4], color='Cluster',
             hover_data=['Gender', 'Age'], 
             template="plotly_dark",
-            color_discrete_sequence=px.colors.qualitative.Neon
+            color_discrete_sequence=px.colors.qualitative.Vivid
         )
         
         # Centroids
