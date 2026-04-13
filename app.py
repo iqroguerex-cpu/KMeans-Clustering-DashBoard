@@ -1,111 +1,116 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.cluster import KMeans
-import os
 
 # --- UI CONFIGURATION ---
 st.set_page_config(
-    page_title="REX-Cluster-V1 | IQROGUEREX", 
-    page_icon="📊", 
+    page_title="REX-Cluster-V1 | IQROGUEREX",
+    page_icon="📊",
     layout="wide"
 )
 
-# Custom CSS for Stealth Dark Mode
+# --- DARK THEME ---
 st.markdown("""
-    <style>
-    .main { background-color: #0E1117; }
-    [data-testid="stMetricValue"] { font-size: 28px; color: #00FFD1; }
-    .stSidebar { background-color: #161B22; }
-    </style>
-    """, unsafe_allow_html=True)
+<style>
+.main { background-color: #0E1117; }
+[data-testid="stMetricValue"] { font-size: 28px; color: #00FFD1; }
+section[data-testid="stSidebar"] { background-color: #161B22; }
+</style>
+""", unsafe_allow_html=True)
 
 # --- HEADER ---
 st.title("📊 Customer Segmentation Monolith")
-st.markdown("Developed by **Chinmay V Chatradamath** | *Vertical AI Analytics Engine*")
+st.markdown("Developed by **Chinmay V Chatradamath**")
 st.divider()
 
-# --- DATA LOADING ---
-def load_data():
-    file_name = "Mall_Customers.csv"
-    if os.path.exists(file_name):
-        df = pd.read_csv(file_name)
-        df.columns = df.columns.str.strip()
-        return df
-    return None
+# --- CONSTANTS ---
+INCOME_COL = "Annual Income (k$)"
+SPENDING_COL = "Spending Score (1-100)"
 
-# Attempt to load data
-df_raw = load_data()
+# --- LOAD FUNCTION ---
+@st.cache_data
+def load_data(file):
+    return pd.read_csv(file)
 
-if df_raw is not None:
-    # Work on a copy to prevent mutation issues
-    df = df_raw.copy()
-    
-    # Define Column Constants (Hardcoded for Mall_Customers.csv)
-    INCOME_COL = "Annual Income (k$)"
-    SPENDING_COL = "Spending Score (1-100)"
+# --- FILE UPLOADER (FORCE THIS IN DEPLOYMENT) ---
+uploaded_file = st.sidebar.file_uploader(
+    "Upload Mall_Customers.csv",
+    type=["csv"]
+)
+
+if uploaded_file is not None:
+    df = load_data(uploaded_file)
+    df.columns = df.columns.str.strip()
 
     if INCOME_COL in df.columns and SPENDING_COL in df.columns:
-        X = df[[INCOME_COL, SPENDING_COL]].values
-        
+
+        X = df[[INCOME_COL, SPENDING_COL]]
+
         # --- SIDEBAR ---
         st.sidebar.header("REX Control Panel")
         k_value = st.sidebar.slider("Clustering Density (K)", 2, 10, 5)
-        show_elbow = st.sidebar.checkbox("Show Elbow Analysis", value=False)
-        
-        # --- K-MEANS ENGINE ---
-        kmeans = KMeans(n_clusters=k_value, init='k-means++', random_state=42, n_init=10)
-        clusters = kmeans.fit_predict(X)
-        
-        # Explicitly assign cluster labels back to the DataFrame copy
-        df['Cluster'] = [f'Segment {i+1}' for i in clusters]
+        show_elbow = st.sidebar.checkbox("Show Elbow Analysis")
 
-        # --- DASHBOARD LAYOUT ---
+        # --- MODEL ---
+        kmeans = KMeans(n_clusters=k_value, random_state=42, n_init=10)
+        df['Cluster'] = kmeans.fit_predict(X)
+
+        # --- LAYOUT ---
         col1, col2 = st.columns([1, 3])
 
         with col1:
             st.subheader("Segment Metrics")
             st.metric("Total Records", len(df))
             st.metric("Active Clusters", k_value)
-            st.dataframe(df[[INCOME_COL, SPENDING_COL, 'Cluster']].head(10))
+
+            with st.expander("Preview Data"):
+                st.dataframe(df.head())
 
         with col2:
-            # Create Plotly Chart using explicitly named columns
             fig = px.scatter(
-                df, 
-                x=INCOME_COL, 
-                y=SPENDING_COL, 
-                color='Cluster',
-                hover_data=['Gender', 'Age'], 
+                df,
+                x=INCOME_COL,
+                y=SPENDING_COL,
+                color=df['Cluster'].astype(str),
+                hover_data=['Gender', 'Age'] if 'Gender' in df.columns else None,
                 template="plotly_dark",
-                title=f"Customer Distribution Map (K={k_value})",
-                color_discrete_sequence=["#00FFD1", "#FF00E4", "#00D1FF", "#8A2BE2", "#ADFF2F"]
+                title=f"Customer Segments (K={k_value})"
             )
-            
-            # Centroid Layer
-            centroids = kmeans.cluster_centers_
+
+            # Centroids
+            centers = kmeans.cluster_centers_
             fig.add_trace(go.Scatter(
-                x=centroids[:, 0], 
-                y=centroids[:, 1],
-                mode='markers', 
-                marker=dict(color='white', size=15, symbol='star', line=dict(width=2, color='black')),
-                name='Centroids'
+                x=centers[:, 0],
+                y=centers[:, 1],
+                mode='markers',
+                marker=dict(size=14, color='white', symbol='star'),
+                name="Centroids"
             ))
-            
-            fig.update_layout(legend_title_text='Market Segments')
+
             st.plotly_chart(fig, use_container_width=True)
 
-        # --- ELBOW METHOD ---
+        # --- ELBOW ---
         if show_elbow:
-            st.divider()
-            wcss = [KMeans(n_clusters=i, n_init=10, random_state=42).fit(X).inertia_ for i in range(1, 11)]
-            elbow_fig = px.line(x=list(range(1, 11)), y=wcss, markers=True, template="plotly_dark")
-            elbow_fig.update_layout(title="Elbow Analysis", xaxis_title="Clusters", yaxis_title="WCSS")
-            elbow_fig.update_traces(line_color='#00FFD1')
+            wcss = []
+            for i in range(1, 11):
+                km = KMeans(n_clusters=i, random_state=42, n_init=10)
+                km.fit(X)
+                wcss.append(km.inertia_)
+
+            elbow_fig = px.line(
+                x=range(1, 11),
+                y=wcss,
+                markers=True,
+                template="plotly_dark",
+                title="Elbow Method"
+            )
+
             st.plotly_chart(elbow_fig, use_container_width=True)
+
     else:
-        st.error(f"Missing columns. Found: {list(df.columns)}")
+        st.error("CSV must contain required columns.")
+
 else:
-    st.error("Mall_Customers.csv not found in repository root.")
+    st.warning("👈 Upload Mall_Customers.csv to begin")
